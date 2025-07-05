@@ -17,14 +17,11 @@
 
 Описание: 
  
-namespace.yaml - создаёт namespace. 
-
-configmap.yaml - заменяет дефолтный конфиг ngix. 
-
-service.yaml - делаем сервис, для проверки работы пода снаружи через NodePort. 
-pod.yaml - описываем сам под. 
-
-emptyDir используется для передачи между init и nginx контейнерами пода index.html
+namespace.yaml - создаёт namespace.  
+configmap.yaml - заменяет дефолтный конфиг ngix.  
+service.yaml - делаем сервис, для проверки работы пода снаружи через NodePort.  
+pod.yaml - описываем сам под.  
+emptyDir используется для передачи между init и nginx контейнерами пода index.html 
 
 ### Запуск
 ```
