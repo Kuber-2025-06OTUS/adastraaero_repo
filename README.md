@@ -142,3 +142,107 @@ Should you manually scale a Deployment, example via kubectl scale deployment dep
 
 
 </details>
+
+3. **HomeWork 3**
+
+Изменить readiness-пробу в манифесте deployment.yaml из прошлого ДЗ на httpGet, вызывающую URL /index.html  
+Необходимо создать манифест service.yaml, описывающий сервис типа ClusterIP, который будет направлять трафик на поды, управляемые вашим deployment 
+Установить в кластер ingress-контроллер nginx 
+Создать манифест ingress.yaml, в котором будет описан объект типа ingress, направляющий все http запросы к хосту homework.otus на ранее созданный сервис. В результате запрос http://homework.otus/index.html должен отдавать код html страницы, находящейся в подах
+
+<details>
+  <summary>Ответ</summary>
+
+Устанавливаем  ingress-nginx и проверяем
+```
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.9.4/deploy/static/provider/baremetal/deploy.yaml
+kubectl get pods -n ingress-nginx
+```
+
+Создаём ingress
+
+```
+kind: Ingress #Создаём объект типа ingress, который управляет входящими http/https запросами и направляет их на сервисы.
+metadata:
+  name: homework-ingress
+  namespace: homework
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: / #Данная аннотация означает, что если в запросе будет /index.html то ingress перепишет его на /
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: homework.otus
+    http:
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: homework-service
+              port:
+                number: 80
+```
+
+Правим Service на Cluster ip
+
+```
+apiVersion: v1
+kind: Service
+metadata:
+  name: homework-service
+  namespace: homework
+spec:
+  selector:
+    app: homework
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: ClusterIP
+```
+
+Правим тип проверки в deployment
+
+```
+          readinessProbe:
+            httpGet: #проверка готовности будет выполняться http запросом
+              path: /index.html # Страница которую мы запрашиваем для проверки
+              port: 8000    # Порт на который выполняется http запрос, должен совпадать с containerPort:
+            periodSeconds: 10 # Проверка запускается каждые 10 сек.
+          lifecycle:
+            preStop: #Хук который выполняется перед остановкой контейнера
+              exec:
+                command: ["/bin/sh", "-c", "rm -f /homework/index.html"]
+
+```
+Запускаем
+
+```
+kubectl apply -f .
+
+
+```
+
+Проверка по DNS внутри кластера:
+
+```
+root@master-1:/home/mity/OTUS/homework3# kubectl get svc -n homework
+NAME               TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)   AGE
+homework-service   ClusterIP   10.233.14.50   <none>        80/TCP    13d
+root@master-1:/home/mity/OTUS/homework3# curl http://homework-service.homework.svc.cluster.local/index.html
+<h1>OTUS HomeWORK 3</h1>
+```
+```
+root@master-1:/home/mity/OTUS/homework3# kubectl get ep -n homework
+NAME               ENDPOINTS                                               AGE
+homework-service   10.233.70.81:8000,10.233.70.82:8000,10.233.70.83:8000   13d
+root@master-1:/home/mity/OTUS/homework3# 
+```
+Проверка через тестовый контейнер
+
+```
+root@master-1:/home/mity/OTUS/homework3# kubectl run -it --rm --image centosadmin/utils test bash -n homework
+If you don't see a command prompt, try pressing enter.
+bash-5.0# curl homework-service 
+<h1>OTUS HomeWORK 3</h1>
+```
