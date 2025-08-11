@@ -250,3 +250,136 @@ If you don't see a command prompt, try pressing enter.
 bash-5.0# curl homework-service 
 <h1>OTUS HomeWORK 3</h1>
 ```
+
+</details>
+
+
+4. **HomeWork 4**
+
+Создать манифест pvc.yaml, описывающий PersistentVolumeClaim, запрашивающий хранилище с storageClass по-умолчанию
+
+● Создать манифест cm.yaml для объекта типа configMap, описывающий произвольный набор пар ключ-значение
+
+● В манифесте deployment.yaml изменить спецификацию volume типа emptyDir, который монтируется в init и основной контейнер, на pvc, созданный в предыдущем пункте
+
+● В манифесте deployment.yaml добавить монтирование ранее созданного configMap как volume к основному контейнеру пода в директорию /homework/conf, так, чтобы его содержимое можно было получить, обратившись по url /conf/file
+
+
+<details>
+  <summary>Ответ</summary>
+
+
+
+Создаём PV - используем локальную папку на ноде, т.к. у нас kubernetes, а не minikube/
+
+```
+ssh node-1
+sudo mkdir -p /var/lib/k8s/pv/homework-1
+sudo chown 65534:65534 /var/lib/k8s/pv/homework-1  
+```
+
+```
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-homework-1
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: hw
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /var/lib/k8s/pv/homework-1
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - node-1
+```
+
+
+
+
+Создаём манифест cm.yaml, с двумя парами ключ-значение.
+
+```
+# cm.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homework-config
+  namespace: homework
+data:
+  file1.txt: |
+    OPOP 111
+  file2.txt: |
+    OPOP 2222
+```
+
+Меняем в deployment volume вместо emptydir на pvc.
+
+```
+initContainers:
+        - name: init-container
+          image: busybox
+          command: ["/bin/sh", "-c"]
+          args:
+            - echo "<h1>OTUS HomeWORK 3</h1>" > /init/index.html;
+          volumeMounts:
+            - name: homework-pvc
+              mountPath: /init
+      containers:
+        - name: web-server
+          image: nginx
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: homework-pvc
+              mountPath: /homework
+            - name: config-volume
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf  # Монтируем только nginx.conf из configMap
+            - name: homework-config
+              mountPath: /homework/conf  # Монтируем файлы из cm.yaml в /homework/conf
+          readinessProbe:
+
+```
+
+
+</details>
+
+Проверка после применения всех манифестов:
+
+```
+root@master-1:/home/mity/OTUS/homework4# curl -H "Host: homework.otus" http://10.233.14.50/index.html
+<h1>OTUS HomeWORK 3</h1>
+root@master-1:/home/mity/OTUS/homework4# kubectl get svc -n homework 
+NAME               TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)   AGE
+homework-service   ClusterIP   10.233.14.50   <none>        80/TCP    30d
+root@master-1:/home/mity/OTUS/homework4# 
+
+kubectl port-forward svc/homework-service 8000:80 -n homework
+
+root@master-1:~# curl http://localhost:8000/conf/file1.txt
+OPOP 111
+root@master-1:~# curl http://localhost:8000/conf/file2.txt
+OPOP 2222
+
+```
+
+Проверка через тестовый контейнер
+
+```
+ kubectl run -it --rm --image centosadmin/utils test bash -n homework
+If you don't see a command prompt, try pressing enter.
+bash-5.0# curl http://homework-service:80/conf/file1.txt
+OPOP 111
+bash-5.0# curl http://homework-service:80/conf/file2.txt
+OPOP 2222
+bash-5.0# 
+```
