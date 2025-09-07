@@ -577,6 +577,7 @@ kubectl get configmap kube-root-ca.crt -n homework -o jsonpath="{.data.ca\.crt}"
 ```
 
 Присваиваем значения переменным и создаём cd-kubeconfig.yaml
+
 Данный манифест позволяет командам (типо kubectl) аутентифицироваться в кластере как сервисный аккаунт cd и работать в namespace homework
 
 ```
