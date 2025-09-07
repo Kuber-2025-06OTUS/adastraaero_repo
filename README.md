@@ -386,3 +386,230 @@ bash-5.0#
 
 </details>
 
+5. **HomeWork 5**
+
+В namespace homework создать service account monitoring и дать ему доступ к эндпоинту /metrics вашего кластера.
+Изменить манифест deployment из прошлых ДЗ так, чтобы поды запускались под service account monitoring. 
+В namespace homework создать service account с именем cd и дать ему роль admin в рамках namespace homework.
+Создать kubeconfig для service account cd.
+Сгенерировать для service account cd токен с временем действия 1 день и сохранить его в файл token/
+
+<details>
+  <summary>Ответ</summary>
+
+В namespace homework создать service account monitoring и дать ему доступ к эндпоинту /metrics вашего кластера.
+Изменить манифест deployment из прошлых ДЗ так, чтобы поды запускались под service account monitoring.   
+
+Создаём манифест сервисного аккаунта
+```
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: monitoring
+  namespace: homework
+secrets:
+  - name: monitoring-service-account-token
+```
+
+Применяем:
+```
+kubectl apply -f service-account-monitoring.yaml
+```
+
+
+Создаём токен для аккаунта мониторинг
+```
+kubectl create token monitoring --duration=48h -n homework
+```
+
+Преобразуем в base64:
+
+```
+echo -n "$TOKEN" | base64
+```
+
+Создаём секрет для monitoring:
+
+```
+apiVersion: v1
+kind: Secret
+metadata:
+  name: monitoring-service-account-token
+  namespace: homework
+  annotations:
+    kubernetes.io/service-account.name: monitoring
+type: kubernetes.io/service-account-token
+data:
+  token: |
+    ZXlKaGJHY2lPaUpTVXpJMU5pSXNJbXRwWkNJNklrVmhXVlpoWDBWc1NrTmhaWFJpVm1OMVpUSndU
+```
+
+Применяем:
+```
+kubectl apply -f secret-service-account-monitoring.yaml
+```
+
+Изменяем манифест deployment.yaml чтобы под запускались из под аккаунта monitoring
+```
+spec:
+      serviceAccountName: monitoring  # Подключаем сервисный аккаунт monitoring
+      nodeSelector:
+```
+Применяем:
+```
+kubectl apply -f deployment.yaml
+```
+
+Создаём Кластерную роль monitoring c соответствующими правами:
+```
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: node-metrics-reader
+rules:
+- apiGroups: [""] 
+  resources: ["nodes/metrics"] 
+  verbs: ["get", "list"]
+```
+
+Применяем:
+```
+kubectl apply -f clusterrole-node-metrics.yaml
+```
+
+Связываем кластерную роль с сервисным аккаунтом monitoring:
+```
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: monitoring-node-metrics
+subjects:
+- kind: ServiceAccount
+  name: monitoring
+  namespace: homework
+roleRef:
+  kind: ClusterRole
+  name: node-metrics-reader
+  apiGroup: rbac.authorization.k8s.io
+```
+
+Применяем:
+```
+kubectl apply -f clusterrolebinding-node-metrics.yaml
+```
+
+Проверяем что метрики под данным аккаунтом можно получить и сервисы запущены под учеткой monitoring
+```
+curl -k \
+  -H "Authorization: Bearer $TOKEN" \
+  https://172.17.60.4:10250/metrics
+```
+![](images/metrics.png)
+
+Проверяем что сервисы запущены под учеткой monitoring
+
+```
+kubectl get pods -n homework -o jsonpath="{range .items[*]}{.metadata.name}{'\t'}{.spec.serviceAccountName}{'\n'}{end}"
+```
+![](images/services.png)
+
+
+
+В namespace homework создать service account с именем cd и дать ему роль admin в рамках namespace homework.
+Создать kubeconfig для service account cd.
+Сгенерировать для service account cd токен с временем действия 1 день и сохранить его в файл token/
+
+Создаём сервисный аккаунт:
+
+```
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cd
+  namespace: homework
+```
+
+Применяем:
+
+```
+kubectl apply -f service-account-cd.yaml
+```
+
+Связываем аккаунт cd c ролью
+
+```
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cd-admin-binding
+  namespace: homework
+subjects:
+  - kind: ServiceAccount
+    name: cd
+    namespace: homework
+roleRef:
+  kind: ClusterRole
+  name: admin
+  apiGroup: rbac.authorization.k8s.io
+```
+
+Применяем:
+
+```
+kubectl apply -f rolebinding-cd-admin.yaml
+```
+
+Создаём токен и сохраняем в файл:
+
+```
+kubectl create token cd --duration=24h -n homework > cd-token.txt
+```
+
+Получаем API сервера:
+```
+kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}'
+
+```
+
+Получаем рутовый сертификат:
+```
+kubectl get configmap kube-root-ca.crt -n homework -o jsonpath="{.data.ca\.crt}" > ca.crt
+```
+
+Присваиваем значения переменным и создаём cd-kubeconfig.yaml
+Данный манифест позволяет командам (типо kubectl) аутентифицироваться в кластере как сервисный аккаунт cd и работать в namespace homework
+
+```
+export SERVER=https://127.0.0.1:6443
+export TOKEN=$(cat cd-token.txt)
+
+cat <<EOF > cd-kubeconfig.yaml
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    certificate-authority: ca.crt
+    server: ${SERVER}
+  name: kubernetes
+contexts:
+- context:
+    cluster: kubernetes
+    namespace: homework
+    user: cd
+  name: cd-context
+current-context: cd-context
+users:
+- name: cd
+  user:
+    token: ${TOKEN}
+EOF
+```
+
+Проверяем 
+
+```
+KUBECONFIG=cd-kubeconfig.yaml kubectl get pods
+```
+![](images/kubeconfig.png)
+
+</details>
