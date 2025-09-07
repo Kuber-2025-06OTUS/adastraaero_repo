@@ -351,7 +351,7 @@ initContainers:
 ```
 
 
-</details>
+
 
 Проверка после применения всех манифестов:
 
@@ -383,3 +383,6 @@ bash-5.0# curl http://homework-service:80/conf/file2.txt
 OPOP 2222
 bash-5.0# 
 ```
+
+</details>
+
