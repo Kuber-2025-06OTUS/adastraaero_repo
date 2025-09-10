@@ -614,3 +614,306 @@ KUBECONFIG=cd-kubeconfig.yaml kubectl get pods
 ![](images/kubeconfig.png)
 
 </details>
+
+8. **HomeWork 8**
+
+Необходимо создать кастомный образ nginx, отдающий свои метрики на определенном endpoint 
+
+● Установить в кластер Prometheus-operator любым удобным вам способом (рекомендуется ставить или по ссылке из офф документации, либо через helm-чарт) 
+
+● Создать deployment запускающий ваш кастомный nginx образ и service для него 
+
+● Настроить запуск nginx prometheus exporter (отдельным подом или в составе пода с nginx – не принципиально) и сконфигурировать его для сбора метрик с nginx 
+
+● Создать манифест serviceMonitor, описывающий сбор метрик с подов, которые вы создали.
+
+
+<details>
+  <summary>Ответ</summary>
+
+
+Устанавливаем оператор Prometheus через helm.
+
+
+```
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+  --namespace monitoring --create-namespace
+```
+
+
+
+Скачиваем/устанавливаем/проверяем последнюю версию nerdctl - cli для containerd
+```
+wget https://github.com/containerd/nerdctl/releases/download/v2.0.4/nerdctl-2.0.4-freebsd-amd64.tar.gz
+tar -xzf nerdctl-2.0.4-freebsd-amd64.tar.gz
+nerdctl --version
+```
+
+
+Скачиваем/устанавливаем buildkit - модный и более безопасный движок для сборки образов
+```
+curl -LO https://github.com/moby/buildkit/releases/download/v0.12.5/buildkit-v0.12.5.linux-amd64.tar.gz
+tar -C /usr/local/bin -xzf buildkit-v0.12.5.linux-amd64.tar.gz
+cp /tmp/buildkit/bin/* /usr/local/bin/
+chmod +x /usr/local/bin/buildkitd /usr/local/bin/buildctl
+which buildkitd
+
+
+```
+
+Запускаем/проверяем buildkit
+
+
+```
+# Создаем сервис
+
+[Unit]
+Description=BuildKit
+Documentation=https://github.com/moby/buildkit
+
+[Service]
+ExecStart=/usr/local/bin/buildkitd --oci-worker=false --containerd-worker=true
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
+
+# Запускаем 
+sudo systemctl daemon-reload
+sudo systemctl enable buildkit
+sudo systemctl start buildkit
+
+# Проверяем 
+sudo systemctl status buildkit
+```
+
+
+
+
+
+
+nginx.conf - Добавляем endpoint для метрик - /stub_status
+
+чтобы nginx предоставлял статистику в формате, который может читать прометей
+
+Stub_status даёт:
+* Active connections - активные соединени
+* accepts - принятые соединения
+* handled - обработанные соединения
+* requests - общее количество запросов
+* Reading/Writing/Waiting - статусы соединений
+
+
+```
+events {}
+
+http {
+    server {
+        listen 80;
+        location / {
+            return 200 'OK';
+            add_header Content-Type text/plain;
+        }
+
+        location /metrics {                   # отдаём stub_status нужный для экспорта метрик nginx-prometheus-exporter
+            stub_status;
+        }
+    }
+}
+```
+
+
+
+
+делаем простой докер с кастомным конфигом nginx
+
+```
+FROM nginx:stable
+
+RUN apt update && apt install -y curl && rm -rf /var/lib/apt/lists/*
+
+COPY nginx.conf /etc/nginx/nginx.conf
+
+EXPOSE 80
+```
+
+
+
+собираем докер образ 
+```
+nerdctl build -t nginx-metrics:latest .
+```
+
+
+копируем образ на worker ноды
+```
+nerdctl save nginx-metrics:latest -o nginx-metrics.tar
+scp nginx-metrics.tar node-1:/root/
+scp nginx-metrics.tar node-2:/root/
+```
+
+Собираю deployment с кастомным образом nginx
+
+
+nginx-metrics-deployment.yaml
+
+```
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-metrics
+  labels:
+    app: nginx-metrics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-metrics
+  template:
+    metadata:
+      labels:
+        app: nginx-metrics
+    spec:
+      containers:
+        - name: nginx
+          image: nginx-metrics:latest   # наш локальный кастомно собранный образ
+          imagePullPolicy: IfNotPresent # не скачиваем образ, т.к. он уже залит на ноды
+          ports:
+            - containerPort: 80
+
+```
+
+
+Описываем service для nginx 
+
+nginx-metrics-service.yaml
+
+```
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-metrics
+spec:
+  selector:
+    app: nginx-metrics
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+
+```
+Собираем Deployment для экспортера
+
+nginx-exporter-deployment.yaml
+
+```
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-exporter
+  template:
+    metadata:
+      labels:
+        app: nginx-exporter
+    spec:
+      containers:
+        - name: exporter
+          image: nginx/nginx-prometheus-exporter:latest
+          args:
+            - -nginx.scrape-uri=http://nginx-metrics:80/stub_status
+          ports:
+            - containerPort: 9113
+```
+
+Создаём Servicemonitor который используется  оператором Prometheus для автоматического обнаружения и сбора метрик
+
+nginx-servicemonitor.yaml
+
+```
+apiVersion: monitoring.coreos.com/v1   # CRD который создал оператор Prometheus
+kind: ServiceMonitor
+metadata:
+  name: nginx-exporter-monitor
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app: nginx-exporter
+  namespaceSelector:
+    matchNames:
+      - default
+  endpoints:
+    - port: http
+      interval: 15s
+```
+
+kube-prometheus-stack - это release name, Helm автоматически добавляет этот label во все связанные объекты
+
+Проверяем что это так:
+```
+ kubectl get prometheus -n monitoring -o yaml | grep release
+      meta.helm.sh/release-name: kube-prometheus-stack
+      meta.helm.sh/release-namespace: monitoring
+      release: kube-prometheus-stack
+        release: kube-prometheus-stack
+        release: kube-prometheus-stack
+        release: kube-prometheus-stack
+        release: kube-prometheus-stack
+        release: kube-prometheus-stack
+```
+
+
+Запускаем services и daemonsetы
+```
+kubectl apply -f nginx-metrics-deployment.yaml
+kubectl apply -f nginx-metrics-service.yaml
+kubectl apply -f nginx-exporter-deployment.yaml
+kubectl apply -f nginx-exporter-service.yaml
+kubectl apply -f nginx-servicemonitor.yaml
+```
+
+
+включаем форвардинг
+```
+kubectl port-forward svc/nginx-exporter 9113:9113
+```
+
+
+Проверяем, что метрики приходят:
+
+```
+root@master-2:~# curl http://localhost:9113/metrics
+# HELP go_gc_duration_seconds A summary of the wall-time pause (stop-the-world) duration in garbage collection cycles.
+# TYPE go_gc_duration_seconds summary
+go_gc_duration_seconds{quantile="0"} 0
+go_gc_duration_seconds{quantile="0.25"} 0
+go_gc_duration_seconds{quantile="0.5"} 0
+go_gc_duration_seconds{quantile="0.75"} 0
+go_gc_duration_seconds{quantile="1"} 0
+go_gc_duration_seconds_sum 0
+go_gc_duration_seconds_count 0
+# HELP go_gc_gogc_percent Heap size target percentage configured by the user, otherwise 100. This value is set by the GOGC environment variable, and the runtime/debug.SetGCPercent function. Sourced from /gc/gogc:percent
+# TYPE go_gc_gogc_percent gauge
+go_gc_gogc_percent 100
+# HELP go_gc_gomemlimit_bytes Go runtime memory limit configured by the user, otherwise math.MaxInt64. This value is set by the GOMEMLIMIT environment variable, and the runtime/debug.SetMemoryLimit function. Sourced from /gc/gomemlimit:bytes
+# TYPE go_gc_gomemlimit_bytes gauge
+go_gc_gomemlimit_bytes 9.223372036854776e+18
+# HELP go_goroutines Number of goroutines that currently exist.
+# TYPE go_goroutines gauge
+go_goroutines 11
+# HELP go_info Information about the Go environment.
+# TYPE go_info gauge
+go_info{version="go1.23.4"} 1
+```
+</details>
