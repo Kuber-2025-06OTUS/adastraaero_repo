@@ -917,3 +917,157 @@ go_goroutines 11
 go_info{version="go1.23.4"} 1
 ```
 </details>
+
+
+
+9. **Homework 9**
+
+**Сервисы централизованного логирования для компонентов Kubernetes и приложений**
+
+Разверните managed Kubernetes cluster в Yandex cloud любым удобным вам способом 
+● Для кластера создайте 2 пула нод: 
+● Для рабочей нагрузки (можно 1 ноду) 
+● Для инфраструктурных сервисов (также хватит пока и 1 ноды) 
+● Для инфраструктурной ноды/нод добавьте taint, запрещающий на нее планирование подов с посторонней нагрузкой -  
+node-role=infra:NoSchedule 
+● Приложите к ДЗ вывод комманд kubectl get node -o wide  
+--show-labels и kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints  
+показывающий конфигурацию нод в вашем кластере 
+● Создайте бакет в s3 object storage Yandex cloud. В нем будут храниться логи, собираемые loki. Также необходимо будет создать ServiceAccount для доступа к бакету и сгенерировать ключи доступа согласно инструкции YC 
+● Установите в кластер Loki  
+● монолитный или распределенный режим не принципиально 
+● Необходимо сконфигурировать параметры установки так, чтобы компоненты loki устанавливались исключительно на infra-ноды (добавить соответствующий toleration для обхода taint, а также nodeSelector или nodeAffinity на ваш выбор, для планирования подов только на заданные ноды) 
+● Место хранения логов – s3 бакет, ранее сконфигурированный вами 
+● Auth_enabled: false 
+
+Установите в кластер promtail
+● Агенты promtail должны быть развернуты на всех нодах кластера, включая infra-ноды (добавить toleration) 
+● Установите в кластер Grafana
+● Должна быть установлена на infra-ноды (toleration и nodeSelector/NodeAffinity)
+● Для установленных loki, promtail и Grafana приложить к ДЗ файлы values.yaml, которые вы использовали для установки, а также команду установки и репозиторий, из которого ставили, если требуется. Не обязательно устанавливать все 3 компонента из разных чартов, приложите именно тот способ установки, который вы использовали.
+● В Grafana необходимо настроить data source к loki и сделать explore по этому datasource и убедиться, что логи отображаются. 
+Приложить скриншот этого экрана из Grafana
+
+
+<details>
+  <summary>Ответ</summary>
+
+Подготовка кластера в YC.
+
+Создаём кластер через GUI.
+
+Подключаемся к кластеру
+```
+yc managed-kubernetes cluster get-credentials --id catu0bn14so432joeegj --external --force
+```
+
+Создаём 2 пула нод
+
+```
+yc managed-kubernetes node-group create `
+  --name infra-pool `
+  --cluster-id catu0bn14so432joeegj `
+  --platform standard-v3 `
+  --cores 2 `
+  --memory 4 `
+  --disk-size 50 `
+  --fixed-size 1 `
+  --location zone=ru-central1-b `
+  --network-interface subnet-id=e2lm05cccru4pu6035u7 `
+  --node-labels node-role=infra
+```
+
+```
+yc managed-kubernetes node-group create `
+  --name workload-pool `
+  --cluster-id catu0bn14so432joeegj `
+  --platform standard-v3 `
+  --cores 2 `
+  --memory 4 `
+  --disk-size 50 `
+  --fixed-size 1 `
+  --subnet-ids e2lm05cccru4pu6035u7 `
+  --location zone=ru-central1-b
+```
+
+Ставим tain на infra
+
+```
+kubectl taint nodes -l node-role=infra node-role=infra:NoSchedule --overwrite
+```
+Проверяем:
+
+```
+kubectl get nodes -o wide --show-labels
+kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints` 
+```
+
+![](images/mon1.png)
+
+Настраиваем NAT и настраиваем маршрутизацию
+
+```
+yc vpc gateway create nat-gw-otus
+$gwid = (yc vpc gateway list --format json | ConvertFrom-Json | Where-Object {$_.name -eq "nat-gw-otus"} | Select-Object -First 1).id
+yc vpc route-table create rt-nat-otus --network-id enpqkelt40cfrtd6vj16
+yc vpc route-table update rt-nat-otus --append-route destination=0.0.0.0/0,gateway-id=$gwid
+yc vpc subnet update e2lm05cccru4pu6035u7 --route-table-id rt-nat-otus
+```
+
+Создаём Service account для loki
+
+```
+yc iam service-account create --name loki-sa
+```
+
+Назначаем права storage.editor
+
+```
+yc resource-manager folder add-access-binding b1gk8kui30tcpritnj9b `
+  --role storage.editor `
+  --service-account-name loki-sa
+```
+
+Создаём и сохраняем ключи
+```
+yc iam access-key create --service-account-name loki-sa
+```
+
+Подключаем репу Helm
+
+```
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo update
+```
+
+Создаём и устанавливаем values-loki.yaml, values-promtail.yaml, values-grafana.yaml
+
+```
+helm upgrade --install loki grafana/loki -n monitoring --create-namespace -f .\values-loki.yaml --set canary.enabled=false
+helm upgrade --install promtail grafana/promtail -n monitoring -f .\values-promtail.yaml
+helm upgrade --install grafana grafana/grafana -n monitoring -f .\values-grafana.yaml
+```
+Пробрасываем порт
+```
+kubectl port-forward -n monitoring svc/grafana 3000:80
+```
+
+Логинимся и выполняем запрос через graphana
+
+```
+{container!="", pod!=""}
+```
+
+
+![](images/mon1.png)
+
+
+
+
+
+
+
+
+
+
+</details>
