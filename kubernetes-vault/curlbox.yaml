@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: curlbox
+  namespace: vault
+spec:
+  serviceAccountName: vault-auth
+  restartPolicy: Never
+  containers:
+  - name: curl
+    image: curlimages/curl:8.9.1
+    command: ["/bin/sh","-lc"]
+    args: ["sleep 3600"]

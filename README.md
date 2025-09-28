@@ -1084,11 +1084,350 @@ kubectl port-forward -n monitoring svc/grafana 3000:80
 
 
 
+11. **HomeWork 11**
+Разверните managed Kubernetes cluster в Yandex cloud любым удобным вам способом. Создайте 3 ноды для кластера
+● В namespace consul установите consul из helm-чарта https://github.com/hashicorp/consul-k8s.git с параметрами 3 реплики для сервера. Приложите команду установки чарта и файл с переменными к результатам ДЗ.
+● В namespace vault установите hashicorp vault из helm-чарта https://github.com/hashicorp/vault-helm.git
+● Сконфигурируйте установку для использования ранее установленного consul в HA режиме
+● Приложите команду установки чарта и файл с переменными к результатам ДЗ.
+● Выполните инициализацию vault и распечатайте с помощью полученного unseal key все поды хранилища
+● Создайте хранилище секретов otus/ с Secret Engine KV, а в нем 
+секрет otus/cred, содержащий username='otus' password='asajkjkahs’
+● В namespace vault создайте serviceAccount с именем vault-auth и ClusterRoleBinding для него с ролью system:auth-delegator. 
+Приложите получившиеся манифесты к результатам ДЗ
+● В Vault включите авторизацию auth/kubernetes и сконфигурируйте ее используя токен и сертификат ранее созданного ServiceAccount
+● Создайте и примените политику otus-policy для секретов /otus/cred с capabilities = [“read”, “list”]. Файл .hcl с политикой приложите к результатам ДЗ
 
 
+Создайте роль auth/kubernetes/role/otus в vault с использованием ServiceAccount vault-auth из namespace Vault и политикой 
+otus-policy
+● Установите External Secrets Operator из helm-чарта в namespace vault. Команду установки чарта и файл с переменными, если вы их используете приложите к результатам ДЗ
+● Создайте и примените манифест crd объекта SecretStore в namespace vault, сконфигурированный для доступа к KV секретам Vault с использованием ранее созданной роли otus и сервис аккаунта vault-auth. Убедитесь, что созданный SecretStore успешно подключился к vault. Получившийся манифест приложите к результатам ДЗ.
+● Создайте и примените манифест crd объекта ExternalSecret с следующими параметрами:
+● ns – vault
+● SecretStore – созданный на прошлом шаге
+● Target.name = otus-cred
+● Получает значения KV секрета /otus/cred из vault и отображает их в два ключа – username и password соответственно
+● Убедитесь, что после применения ExternalSecret будет создан Secret в ns vault с именем otus-cred и хранящий в себе 2 ключа username и password, со значениями, которые были сохранены ранее в vault. Добавьте манифест объекта ExternalSecret к результатам ДЗ.
 
 
+<details>
+  <summary>Ответ</summary>
+
+Создаём 3 нода к
+
+```
+yc managed-kubernetes node-group create `
+  --name $NODEGROUP `
+  --cluster-id $CLUSTER_ID `
+  --platform standard-v3 `
+  --cores 2 `
+  --memory 4 `
+  --disk-size 50 `
+  --fixed-size 3 `
+  --location zone=$ZONE `
+  --network-interface "subnets=$SUBNET_ID,ipv4-address=nat" `
+  --node-labels node-role=worker
+```
+Устанавливаем helm на W11 и проверяем
+
+```
+choco install kubernetes-helm -y
+helm version
+```
+
+Установка, настройка проверка Consul 
+
+```
+kubectl create namespace consul
+```
+
+values-consul.yaml
+
+```
+global:
+  name: consul
+  datacenter: dc1
+
+server:
+  replicas: 3                
+  bootstrapExpect: 3         # ожидаем 3 сервера для кворума
+  storage: 10Gi              
+  disruptionBudget:
+    enabled: true
+
+ui:
+  enabled: true              # включим веб
+
+client:
+  enabled: true             
+
+connectInject:
+  enabled: false           
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+```
+
+Установка
+
+```
+helm upgrade --install consul hashicorp/consul `
+  -n consul `
+  -f .\values-consul.yaml
+```
+
+Проверка
+
+```
+kubectl get pods -n consul -o wide
+kubectl get svc  -n consul
+kubectl port-forward -n consul svc/consul-ui 8500:80
+```
+![](images/cons1.png)
+
+![](images/cons2.png)
 
 
+Установка и подготовка Vault
+
+values-vault.yaml
+
+```
+server:
+  replicas: 3
+  ha:
+    enabled: true
+    config: |
+      ui = true
+
+      listener "tcp" {
+        address     = "0.0.0.0:8200"
+        tls_disable = 1
+      }
+
+      storage "consul" {
+        address = "consul-server.consul.svc.cluster.local:8500"
+        path    = "vault/"
+      }
+
+      disable_mlock = true
+
+  dataStorage:
+    enabled: true
+    size: 5Gi
+    storageClass: yc-network-hdd
+
+  disruptionBudget:
+    enabled: true
+    maxUnavailable: 1
+
+  service:
+    type: ClusterIP
+
+ui:
+  enabled: true
+  serviceType: ClusterIP
+
+```
+
+```
+kubectl create ns vault
+
+helm upgrade --install vault hashicorp/vault `
+  -n vault `
+  -f .\values-vault.yaml
+```
+
+Получаем данные для распечатывания(unseal)
+
+```
+PS C:\OTUS_KUBER\OTUS_VAULT> kubectl exec -n vault -ti vault-0 -- sh -lc "vault operator init -key-shares=1 -key-threshold=1" `
+>> | Tee-Object -FilePath .\init.txt
+
+Unseal Key 1: NACzVjx5IwpK4Mqkn0FWK1MAQlztpQ4Y+NSdieDTEiQ=
+
+Initial Root Token: hvs.hMVSwUJliksqwZFNIK7h549p
+
+Vault initialized with 1 key shares and a key threshold of 1. Please securely
+distribute the key shares printed above. When the Vault is re-sealed,
+restarted, or stopped, you must supply at least 1 of these keys to unseal it
+before it can start servicing requests.
+
+Vault does not store the generated root key. Without at least 1 keys to
+reconstruct the root key, Vault will remain permanently sealed!
+
+It is possible to generate new unseal keys, provided you have a quorum of
+existing unseal keys shares. See "vault operator rekey" for more information.
+PS C:\OTUS_KUBER\OTUS_VAULT>
+```
+
+Инициализация и распечатывание
+
+```
+kubectl exec -n vault -ti vault-0 -- sh -lc "vault operator init -key-shares=1 -key-threshold=1" `
+| Tee-Object -FilePath .\init.txt
+
+$UNSEAL_KEY = (Get-Content .\init.txt | Select-String "Unseal Key" | Select-Object -First 1).ToString().Split(":")[1].Trim()
+$ROOT_TOKEN = (Get-Content .\init.txt | Select-String "Initial Root Token" | Select-Object -First 1).ToString().Split(":")[1].Trim()
+
+# unseal для всех еплик
+kubectl exec -n vault -ti vault-0 -- sh -lc "vault operator unseal '$UNSEAL_KEY'"
+kubectl exec -n vault -ti vault-1 -- sh -lc "vault operator unseal '$UNSEAL_KEY'"
+kubectl exec -n vault -ti vault-2 -- sh -lc "vault operator unseal '$UNSEAL_KEY'"
+
+```
+# проверка
+kubectl get pods -n vault
+kubectl exec -n vault -ti vault-0 -- sh -lc 'vault status'
+
+![](images/cons3.png)
+
+
+Включаем KV  и создаём секрет через vault-0
+
+```
+vault secrets enable -path=otus kv-v2 || true
+vault kv put otus/cred username=otus password=asajkjkahs
+vault kv get otus/cred
+
+```
+
+ServiceAccount и RBAC для Kubernetes-auth
+
+vault-auth-rbac.yaml
+```
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault-auth
+  namespace: vault
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vault-auth-delegator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: vault-auth
+    namespace: vault
+```
+
+```
+kubectl apply -f .\vault-auth-rbac.yam
+```
+
+В Vault включите авторизацию auth/kubernetes и сконфигурируйте ее используя токен и сертификат ранее созданного ServiceAccount
+
+В vault-0
+
+```
+vault auth enable kubernetes || true
+
+cp /var/run/secrets/kubernetes.io/serviceaccount/token  /tmp/sa.token
+cp /var/run/secrets/kubernetes.io/serviceaccount/ca.crt /tmp/ca.crt
+
+vault write auth/kubernetes/config \
+  token_reviewer_jwt=@/tmp/sa.token \
+  kubernetes_host=https://kubernetes.default.svc \
+  kubernetes_ca_cert=@/tmp/ca.crt \
+  issuer=kubernetes.default.svc
+
+vault read auth/kubernetes/config
+```
+
+Создайте и примените политику otus-policy для секретов /otus/cred с capabilities = [“read”, “list”]
+
+otus-policy.hcl
+```
+path "otus/data/*" {
+  capabilities = ["read","list"]
+}
+path "otus/metadata/*" {
+  capabilities = ["read","list"]
+}
+```
+
+Создайте и примените манифест crd объекта ExternalSecret с следующими параметрами:
+● ns – vault
+● SecretStore – созданный на прошлом шаге
+● Target.name = otus-cred
+● Получает значения KV секрета /otus/cred из vault и отображает их в два ключа – username и password соответственно
+
+externalsecret.yaml
+```
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: otus-cred
+  namespace: vault
+spec:
+  refreshInterval: 1m
+  secretStoreRef:
+    name: vault-otus
+    kind: SecretStore
+  target:
+    name: otus-cred
+    creationPolicy: Owner
+  data:
+    - secretKey: username
+      remoteRef:
+        key: cred
+        property: username
+    - secretKey: password
+      remoteRef:
+        key: cred
+        property: password
+```
+
+secretstore.yaml
+
+```
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: vault-otus
+  namespace: vault
+spec:
+  provider:
+    vault:
+      server: http://vault.vault.svc:8200
+      path: otus
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: otus-role
+          serviceAccountRef:
+            name: vault-auth
+
+```
+
+Проверка:
+```
+kubectl -n vault describe secretstore vault-otus
+kubectl -n vault get externalsecret otus-cred
+kubectl -n vault get secret otus-cred -o jsonpath="{.data.username}" | %{ [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($_)) }
+kubectl -n vault get secret otus-cred -o jsonpath="{.data.password}" | %{ [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($_)) }
+```
+
+![](images/cons4.png)
+
+
+Описание файлов из репозитория
+ca.crt — корневой сертификат кластера Kubernetes
+curlbox.yaml —  Ручные провероки логина в Vault
+vault-auth-curl.yaml — тестовыйй под с curl, запущенный от vault-auth
+vault-auth-test.yaml — тестовый под для логина в Vault через Kubernetes auth и попытки чтения otus/cred.
 
 </details>
