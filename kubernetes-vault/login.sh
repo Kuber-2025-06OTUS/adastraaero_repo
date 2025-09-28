@@ -3,7 +3,7 @@ set -eu
 
 VAULT_ADDR="http://vault.vault.svc:8200"
 
-# 1) ????????? ? Vault ????? Kubernetes auth
+
 JWT="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
 printf '{"role":"%s","jwt":"%s"}\n' otus-role "$JWT" > /tmp/login.json
 
@@ -16,7 +16,7 @@ RESP="$(curl -sS -X POST -H 'Content-Type: application/json' \
 }
 echo "$RESP"
 
-# ??????? client_token ?? JSON ??? jq (????? sed)
+
 CT="$(echo "$RESP" | sed -n 's/.*"client_token":"\([^"]*\)".*/\1/p')"
 if [ -z "$CT" ]; then
   echo "Failed to parse client_token from login response"
@@ -24,7 +24,7 @@ if [ -z "$CT" ]; then
 fi
 echo "[login] client_token acquired"
 
-# 2) ?????? ?????? (KV v2: ???? data/cred)
+
 echo "[read] GET $VAULT_ADDR/v1/otus/data/cred"
 curl -sS -H "X-Vault-Token: $CT" "$VAULT_ADDR/v1/otus/data/cred" || {
   echo "Read request failed"
