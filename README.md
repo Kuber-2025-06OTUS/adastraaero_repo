@@ -1082,7 +1082,7 @@ kubectl port-forward -n monitoring svc/grafana 3000:80
 
 ![](images/mon2.png)
 
-
+</details>
 
 11. **HomeWork 11**
 Разверните managed Kubernetes cluster в Yandex cloud любым удобным вам способом. Создайте 3 ноды для кластера
