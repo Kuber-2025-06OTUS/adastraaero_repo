@@ -1,0 +1,24 @@
+image:
+  registry: docker.io  #Забираем с Docker Hub т.к. с отсальными проблемы
+  repository: grafana/promtail
+
+
+config:
+  clients:
+    - url: http://loki-gateway.monitoring.svc.cluster.local/loki/api/v1/push  # Говорим куда отправлять логи
+
+
+tolerations:   # Разрешаем планироваться на поды с соотвествующим taint
+  - key: "node-role"
+    operator: "Equal"
+    value: "infra"
+    effect: "NoSchedule"
+
+
+resources:
+  requests:
+    cpu: "50m"
+    memory: "128Mi"
+  limits:
+    cpu: "200m"
+    memory: "256Mi"

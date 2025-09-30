@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-metrics
+  labels:
+    app: nginx-metrics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-metrics
+  template:
+    metadata:
+      labels:
+        app: nginx-metrics
+    spec:
+      containers:
+        - name: nginx
+          image: nginx-metrics:latest   # наш локальный кастомно собранный образ
+          imagePullPolicy: IfNotPresent # не скачиваем образ, т.к. он уже залит на ноды
+          ports:
+            - containerPort: 80

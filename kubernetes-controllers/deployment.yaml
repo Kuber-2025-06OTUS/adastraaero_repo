@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: homework-deployment
+  namespace: homework
+  labels:
+    app: homework
+spec:
+  replicas: 3  # Запускаем 3 экземпляра пода из прошлого ДЗ
+  selector:
+    matchLabels:
+      app: homework
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1  # В процессе обновления может быть недоступен 1 под
+      maxSurge: 1        # Указываем что в процессе обновления можно создавать 1 дполнительный под
+  template:
+    metadata:
+      labels:
+        app: homework
+    spec:
+      nodeSelector:
+        homework: "true"  # Указываем, что поды могут запускаться только на нодах с меткой homework
+      volumes:
+        - name: shared-volume
+          emptyDir: {}
+        - name: config-volume
+          configMap:
+            name: nginx-config
+      initContainers:
+        - name: init-container
+          image: busybox
+          command: ["/bin/sh", "-c"]
+          args:
+            - echo "<h1>OTUS HomeWORK 1</h1>" > /init/index.html;
+          volumeMounts:
+            - name: shared-volume
+              mountPath: /init
+      containers:
+        - name: web-server
+          image: nginx
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: shared-volume
+              mountPath: /homework
+            - name: config-volume
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+          readinessProbe:  # Проверяем наличие файла /homework/index.html
+            exec:
+              command: ["/bin/sh", "-c", "test -f /homework/index.html"]
+            initialDelaySeconds: 5  # Подождать 5 секунд после старта контейнера прежде чем начать проверку
+            periodSeconds: 10 # Проверять каждые 10 секунд после первой проверки
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "rm -f /homework/index.html"]
+

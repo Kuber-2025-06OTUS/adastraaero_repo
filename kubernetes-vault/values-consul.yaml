@@ -1,0 +1,27 @@
+global:
+  name: consul
+  datacenter: dc1
+
+server:
+  replicas: 3                
+  bootstrapExpect: 3         # ожидаем 3 сервера для кворума
+  storage: 10Gi              
+  disruptionBudget:
+    enabled: true
+
+ui:
+  enabled: true              # включим веб
+
+client:
+  enabled: true             
+
+connectInject:
+  enabled: false           
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
