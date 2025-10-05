@@ -1726,7 +1726,7 @@ debug pod - создаём контейнер в существующем под
 kubectl -n distroless exec -ti nginx-distroless -c stracebox2 -- sh -lc "timeout 5 strace -tt -s 200 -p 1"
 ```
 
-![](images/dbg1.png)
+![](images/dbg2.png)
 
 
 </details>
