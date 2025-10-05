@@ -1453,3 +1453,281 @@ vault-auth-test.yaml — тестовый под для логина в Vault ч
 
 
 </details>
+
+
+12. **Homework 12**
+Создайте манифест, описывающий pod с distroless образом для создания контейнера, например kyos0109/nginx-distroless и примените его в кластере. Приложите манифест к результатам ДЗ.
+
+● С помощью команды kubectl debug создайте эфемерный контейнер для отладки этого пода. Отладочный контейнер должен иметь доступ к пространству имен pid для основного контейнера пода.
+
+● Получите доступ к файловой системе отлаживаемого контейнера из эфемерного. Приложите к результатам ДЗ вывод команды ls –la для директории /etc/nginx
+
+● Запустите в отладочном контейнере команду tcpdump -nn -i any -e port 80 (или другой порт, если у вас приложение на нем)
+
+● Выполните несколько сетевых обращений к nginx в отлаживаемом поде любым удобным вам способом. Убедитесь что tcpdump отображает сетевые пакеты этих подключений. Приложите результат работы tcpdump к результатам ДЗ.
+
+● С помощью kubectl debug создайте отладочный под для ноды, на которой запущен ваш под с distroless nginx
+
+● Получите доступ к файловой системе ноды, и затем доступ к логам пода с distrolles nginx. Приложите сами логи, и команду их получения к результатам ДЗ. 
+
+
+
+
+<details>
+  <summary>Ответ</summary>
+
+Создаём требуемый под 
+
+nginx-configmap.yaml
+```
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-conf
+  namespace: distroless
+data:
+  nginx.conf: |
+    worker_processes  auto;
+
+    events {
+      worker_connections  1024;
+    }
+
+    http {
+      log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+
+      access_log  /dev/stdout main;
+      error_log   /dev/stderr warn;
+
+      sendfile on;
+
+      server {
+        listen 80;
+        server_name _;
+
+        location / {
+          return 200 'ok\n';
+        }
+      }
+    }
+```
+
+ns-distroless.yaml
+```
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: distroless
+```
+
+nginx-distroless-pod.yaml
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-distroless
+  namespace: distroless
+  labels:
+    app: nginx-distroless
+spec:
+  containers:
+  - name: nginx
+    image: kyos0109/nginx-distroless:latest
+    ports:
+    - containerPort: 80
+      name: http
+    volumeMounts:
+    - name: nginx-conf
+      mountPath: /etc/nginx/nginx.conf
+      subPath: nginx.conf
+      readOnly: true
+  volumes:
+  - name: nginx-conf
+    configMap:
+      name: nginx-conf
+```
+
+Применяем и проверяем:
+
+```
+kubectl apply -f .\ns-distroless.yaml
+kubectl apply -f .\nginx-configmap.yaml
+kubectl apply -f .\nginx-distroless-pod.yaml
+kubectl -n distroless get pod -o wide
+```
+
+запускаем эфемерный контейнер:
+
+```
+ kubectl -n distroless debug pod/nginx-distroless `
+  --image=nicolaka/netshoot `
+  --target=nginx `
+  -it -- bas
+```
+
+Проверяем:
+```
+nginx-distroless:~# ls -la /proc/1/root/etc/nginx
+total 48
+drwxr-xr-x    3 root     root          4096 Oct  5  2020 .
+drwxr-xr-x    1 root     root          4096 Oct  5 06:45 ..
+drwxr-xr-x    2 root     root          4096 Oct  5  2020 conf.d
+-rw-r--r--    1 root     root          1007 Apr 21  2020 fastcgi_params
+-rw-r--r--    1 root     root          2837 Apr 21  2020 koi-utf
+-rw-r--r--    1 root     root          2223 Apr 21  2020 koi-win
+-rw-r--r--    1 root     root          5231 Apr 21  2020 mime.types
+lrwxrwxrwx    1 root     root            22 Apr 21  2020 modules -> /usr/lib/nginx/modules
+-rw-r--r--    1 root     root           586 Oct  5 06:45 nginx.conf
+-rw-r--r--    1 root     root           636 Apr 21  2020 scgi_params
+-rw-r--r--    1 root     root           664 Apr 21  2020 uwsgi_params
+-rw-r--r--    1 root     root          3610 Apr 21  2020 win-utf
+
+
+nginx-distroless:~# sed -n '1,120p' /proc/1/root/etc/nginx/nginx.conf
+worker_processes  auto;
+
+events {
+  worker_connections  1024;
+}
+
+http {
+  log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                  '$status $body_bytes_sent "$http_referer" '
+                  '"$http_user_agent" "$http_x_forwarded_for"';
+
+  access_log  /dev/stdout main;
+  error_log   /dev/stderr warn;
+
+  sendfile on;
+
+  server {
+    listen 80;
+    server_name _;
+
+    location / {
+      return 200 'ok\n';
+    }
+  }
+}
+
+```
+
+В одном окне запускаем tcpdump, во втором curlbox для проверки, что пакеты приходят
+
+```
+tcpdump -nn -i any -e port 80
+```
+
+```
+$ip = kubectl -n distroless get pod nginx-distroless -o jsonpath='{.status.podIP}'
+
+kubectl -n distroless run curlbox --rm -it --restart=Never --image=curlimages/curl:8.9.1 -- `
+  sh -lc "for i in 1 2 3 4 5; do curl -sS http://$ip/; sleep 1; done"
+```
+
+![](images/dbg1.png)
+
+
+Создаём отладочный под для ноды, использовал манифест, т.к. возникли проблемы с пулом образов...
+
+Получаем UID nginx пода и ноды
+```
+PS C:\OTUS_KUBER\OTUS_DEBUG> $PUID = kubectl -n distroless get pod nginx-distroless -o jsonpath='{.metadata.uid}'
+PS C:\OTUS_KUBER\OTUS_DEBUG> $NODE = kubectl -n distroless get pod nginx-distroless -o jsonpath='{.spec.nodeName}'
+PS C:\OTUS_KUBER\OTUS_DEBUG> $PUID
+88b86404-47e7-4441-b68b-1c29fa20d91a
+PS C:\OTUS_KUBER\OTUS_DEBUG> $NODE
+cl1g4ikihp6fhpf2hfd0-uvav
+```
+
+node-debug.yaml
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: node-debug
+  namespace: distroless
+  labels:
+    run: node-debugger
+spec:
+  nodeName: cl1g4ikihp6fhpf2hfd0-uvav
+  hostPID: true
+  restartPolicy: Never
+  containers:
+  - name: debugger
+    image: registry.k8s.io/e2e-test-images/busybox:1.29
+    command: ["/bin/sh","-lc"]
+    args: ["sleep 3600"]
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - name: host-root
+      mountPath: /host
+      readOnly: true
+  volumes:
+  - name: host-root
+    hostPath:
+      path: /
+      type: Directory
+```
+
+Смотрим какие файлы соотвествуют нашему контейнеру:
+
+```
+PS C:\OTUS_KUBER\OTUS_DEBUG> kubectl -n distroless exec -ti node-debug -- sh -lc "ls -l /host/var/log/containers | grep nginx-distroless || true"
+lrwxrwxrwx    1 root     root            99 Oct  5 06:49 nginx-distroless_distroless_debugger-v5j95-580a7291a289decae9e969b0f786cc26b989cec783c2206be663c9288eb5b659.log -> /var/log/pods/distroless_nginx-distroless_88b86404-47e7-4441-b68b-1c29fa20d91a/debugger-v5j95/0.log
+lrwxrwxrwx    1 root     root            90 Oct  5 06:45 nginx-distroless_distroless_nginx-90065161de7402f24c395bc79fcdc3184d969116e9ea9b7cdddeb33b37c45084.log -> /var/log/pods/distroless_nginx-distroless_88b86404-47e7-4441-b68b-1c29fa20d91a/nginx/0.log
+```
+
+Выкачиваем лог:
+
+```
+kubectl -n distroless cp `
+  node-debug:/host/var/log/pods/distroless_nginx-distroless_$($PUID)/nginx/0.log `
+  .\nginx-distroless-0.log
+```
+
+Задача со *
+
+Выполните команду strace для корневого процесса nginx в рассматриваемом ранее поде.
+
+Опишите в результатах ДЗ какие операции необходимо сделать, для успешного выполнения команды, и также приложите ее вывод к результатам ДЗ.
+
+distroless-образ не содержит strace и других утилит, поэтому нужно создать эфемернвый контейнер, в котором есть strace.
+Запустить это контейнер в том же поде и поделиться PID-неймспейсом с основным контейнером для просмотра процессов.
+
+Создание эфемерного контейнера:
+
+```
+$NS  = "distroless"
+$POD = "nginx-distroless"
+
+kubectl -n $NS debug pod/$POD `
+  --target=nginx `
+  --image=nicolaka/netshoot:latest `
+  --share-processes `
+  --container=stracebox2 `
+  --profile=general `
+  --attach=false `
+  -- bash -lc "sleep infinity"
+
+```
+debug pod - создаём контейнер в существующем поде
+--target=nginx - указываем с кем делить cgroup/namespace
+--share-processes - разрешаем видеть процессы основного контейнера
+--profile=general - без него ptrace не работает
+
+
+Команда strace для корневого процесса
+
+```
+kubectl -n distroless exec -ti nginx-distroless -c stracebox2 -- sh -lc "timeout 5 strace -tt -s 200 -p 1"
+```
+
+![](images/dbg1.png)
+
+
+</details>
+
