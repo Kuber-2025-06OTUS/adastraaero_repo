@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: node-debug
+  namespace: distroless
+  labels:
+    run: node-debugger
+spec:
+  nodeName: cl1g4ikihp6fhpf2hfd0-uvav
+  hostPID: true
+  restartPolicy: Never
+  containers:
+  - name: debugger
+    image: registry.k8s.io/e2e-test-images/busybox:1.29
+    command: ["/bin/sh","-lc"]
+    args: ["sleep 3600"]
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - name: host-root
+      mountPath: /host
+      readOnly: true
+  volumes:
+  - name: host-root
+    hostPath:
+      path: /
+      type: Directory
