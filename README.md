@@ -1743,13 +1743,20 @@ kubectl -n distroless exec -ti nginx-distroless -c stracebox2 -- sh -lc "timeout
 ***Описание виртуальных машин для развертывания кластера: ***
 
 Мастер ноды
+
 KUBMS1 172.17.60.11 2 CPU 2,6 ГГц, 4 Гб RAM, 60 Гб HDD, ОС Ubuntu 24.04
+
 KUBMS2 172.17.60.8  2 CPU 2,6 ГГц, 4 Гб RAM, 60 Гб HDD, ОС Ubuntu 24.04
+
 KUBMS3 172.17.60.13 2 CPU 2,6 ГГц, 4 Гб RAM, 60 Гб HDD, ОС Ubuntu 24.04
 
+
 Воркер ноды
+
 KUBWK1 172.17.60.12 2 CPU 2,6 ГГц, 8 Гб RAM, 80 Гб HDD, ОС Ubuntu 24.04
+
 KUBWK2 172.17.60.10 2 CPU 2,6 ГГц, 8 Гб RAM, 80 Гб HDD, ОС Ubuntu 24.04
+
 
 
 ***Подготовка виртуалок для развертывания кластера:***
