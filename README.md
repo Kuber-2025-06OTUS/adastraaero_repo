@@ -1982,7 +1982,9 @@ spec:
 
 применяем
 
+```
 kubectl apply -f dashboard-ingress-catchall.yaml
+```
 
 Делаем пользователя и получаем токен
 
@@ -2012,9 +2014,11 @@ subjects:
 
 Применяем, проверяем 
 
+```
 kubectl apply -f dashboard-admin.yaml
 kubectl -n kubernetes-dashboard create token admin-user
 kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide
+```
 
 ![](images/cl7.png)
 
