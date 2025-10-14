@@ -1731,3 +1731,295 @@ kubectl -n distroless exec -ti nginx-distroless -c stracebox2 -- sh -lc "timeout
 
 </details>
 
+
+
+
+14. **Homework 14**
+
+Создание кластера с использованием  kubespray
+<details>
+  <summary>Ответ</summary>
+
+***Описание виртуальных машин для развертывания кластера: ***
+
+Мастер ноды
+KUBMS1 172.17.60.11 2 CPU 2,6 ГГц, 4 Гб RAM, 60 Гб HDD, ОС Ubuntu 24.04
+KUBMS2 172.17.60.8  2 CPU 2,6 ГГц, 4 Гб RAM, 60 Гб HDD, ОС Ubuntu 24.04
+KUBMS3 172.17.60.13 2 CPU 2,6 ГГц, 4 Гб RAM, 60 Гб HDD, ОС Ubuntu 24.04
+
+Воркер ноды
+KUBWK1 172.17.60.12 2 CPU 2,6 ГГц, 8 Гб RAM, 80 Гб HDD, ОС Ubuntu 24.04
+KUBWK2 172.17.60.10 2 CPU 2,6 ГГц, 8 Гб RAM, 80 Гб HDD, ОС Ubuntu 24.04
+
+
+***Подготовка виртуалок для развертывания кластера:***
+
+Обновляем виртуалки
+```
+sudo apt update && sudo apt upgrade -y
+```
+
+Выключаем ufw
+```
+systemctl disable ufw && systemctl stop ufw
+```
+
+Выключаем swap в /etc/fstab
+
+```
+# /swap.img     none    swap    sw      0       0
+```
+
+разрешаем форвард межсетевого трафика между интерфейсами:
+
+```
+echo 'net.ipv4.ip_forward=1' | sudo tee -a /etc/sysctl.conf
+```
+
+*** На сервере c Ansible *** 
+
+Копируем ключи с сервера Ansible на все машины
+
+```
+ssh-copy-id mity@172.17.60.11
+```
+
+На сервере ansible клонируем репозиторий kubespray
+
+```
+git clone https://github.com/kubernetes-sigs/kubespray
+```
+
+запускаем установку requirements
+
+```
+pip3 install -r requirements.txt
+```
+
+Вносим измения в файлы роли, для соответствия требованиям нашего кластера:
+
+inventory/k8s-dev-cluster/inventory.ini
+
+```
+[kube_control_plane]
+kubms1 ansible_host=172.17.60.11 ip=172.17.60.11 etcd_member_name=etcd1
+kubms2 ansible_host=172.17.60.8 ip=172.17.60.8 etcd_member_name=etcd2
+kubms3 ansible_host=172.17.60.13 ip=172.17.60.13 etcd_member_name=etcd3
+
+[etcd:children]
+kube_control_plane
+
+[kube_node]
+kubwk1 ansible_host=172.17.60.12 ip=172.17.60.12 node_labels="{'node-role.kubernetes.io/worker': ''}"
+kubwk2 ansible_host=172.17.60.10 ip=172.17.60.10 node_labels="{'node-role.kubernetes.io/worker': ''}"
+```
+
+inventory/k8s-dev-cluster/group_vars/k8s_cluster/k8s-cluster.yml
+
+```
+kube_proxy_mode: iptables # режим проксирования
+dns_mode: coredns #dns сервер, который будет обслуживать кластер
+kube_network_plugin: calico # Сетевой плагин
+kubeconfig_localhost: true # сгенерит на Ансибл хосте в  inventory_dir }}/artifacts копию kubeconfig
+
+```
+
+
+
+
+
+запускаем установку кластера
+
+```
+ansible-playbook -i inventory/mycluster/hosts.yaml cluster.yml --become --become-user=root
+```
+
+***Проверка установки***
+
+```
+kubectl cluster-info
+
+kubectl get nodes -o wide
+
+kubectl get pods -A -o wide
+
+kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints  # проверяем, что на мастернодах не будет запускаться нагрузка
+```
+
+![](images/cl1.png)
+
+***Проверка готовности control plane на нодах***
+
+kubectl get --raw='/readyz?verbose' | head
+kubectl get --raw='/livez?verbose' | head
+
+![](images/cl2.png)
+
+![](images/cl3.png)
+
+![](images/cl4.png)
+
+
+***Проверка установки Helm, Calico***
+
+```
+helm version
+helm list -A
+
+kubectl -n kube-system get ds calico-node
+kubectl -n kube-system get deploy calico-kube-controllers
+kubectl api-resources | grep -i projectcalico
+kubectl get ippools.crd.projectcalico.org
+```
+![](images/cl5.png)
+
+
+**Установка dashboard**
+
+1. Устанавливем ingress
+
+```
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+  -n ingress-nginx --create-namespace \
+  --set controller.ingressClassResource.default=true \
+  --set controller.service.type=NodePort \
+  --set controller.service.nodePorts.http=30080 \
+  --set controller.service.nodePorts.https=30443
+```
+
+2. Делаем самоподписный сертификат
+
+```
+openssl req -x509 -nodes -newkey rsa:2048 -days 825 \
+  -keyout kd.key -out kd.crt -subj "/CN=dashboard.home"
+```
+3. Загружаем сертификат в ns Dashboard
+
+```
+kubectl -n kubernetes-dashboard create secret tls kd-tls \
+  --key kd.key --cert kd.crt
+```
+
+Проверяем
+
+```
+kubectl -n kubernetes-dashboard get secret kd-tls
+
+```
+![](images/cl6.png)
+
+делаем 2 ingress до dashboard (один по ip, один по имени )
+
+dashboard-ingress.yaml
+
+```
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dashboard
+  namespace: kubernetes-dashboard
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["dashboard.home"]
+      secretName: kd-tls
+  rules:
+    - host: dashboard.home
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kubernetes-dashboard-kong-proxy
+                port:
+                  number: 443
+```
+
+применяем, проверяем 
+kubectl apply -f dashboard-ingress.yaml
+kubectl -n kubernetes-dashboard get ingress dashboard -o wide
+
+
+dashboard-ingress-catchall.yaml
+
+```
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dashboard-catchall
+  namespace: kubernetes-dashboard
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kubernetes-dashboard-kong-proxy
+                port:
+                  number: 443
+
+
+```
+
+применяем
+
+kubectl apply -f dashboard-ingress-catchall.yaml
+
+Делаем пользователя и получаем токен
+
+dashboard-admin.yaml
+
+```
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: admin-user
+  namespace: kubernetes-dashboard
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: admin-user
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: admin-user
+    namespace: kubernetes-dashboard
+
+```
+
+Применяем, проверяем 
+
+kubectl apply -f dashboard-admin.yaml
+kubectl -n kubernetes-dashboard create token admin-user
+kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide
+
+![](images/cl7.png)
+
+![](images/cl8.png)
+
+
+добавляем 172.17.60.11 dashboard.home в hosts на пк с которого проверяем
+
+и проверяем по имени и ip
+
+![](images/cl9.png)
+
+![](images/cl10.png)
+
+</details>
